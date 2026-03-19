@@ -288,7 +288,7 @@ with tab2:
         trigger_lt_bulk = st.button("Record 5000 Events Rapidly", key="t2_bulk")
 
     # Physics Constants for 3-Component Polymer (e.g., Plexiglas)
-    time_res_sigma = 100.0  # Detector jitter (ps)
+    time_res_sigma = 100.0  # Single detector jitter (ps)
     
     # Component 1: Para-positronium (p-Ps) - Very fast
     tau1, alpha1 = 150.0, 0.20
@@ -350,7 +350,7 @@ with tab2:
                 ax_phys.set_xlim(-15, 15)
                 ax_phys.set_ylim(-2, 2)
                 ax_phys.axis('off')
-                ax_phys.set_title(f"Event {ev + 1}/{num_lt_events}: {comp['name']} State ($\tau$={comp['tau']:.0f}ps)", color=comp['color'])
+                ax_phys.set_title(f"Event {ev + 1}/{num_lt_events}: {comp['name']} State ($\\tau$={comp['tau']:.0f}ps)", color=comp['color'])
                 
                 # Detectors & Source
                 ax_phys.add_patch(patches.Rectangle((-10, -1), 2, 2, color='mediumorchid', alpha=0.4))
@@ -463,17 +463,23 @@ with tab2:
         fig_hist2.patch.set_facecolor('none')
         ax_hist2.set_facecolor('none')
         
-        # Calculate theoretical curves via convolution
-        t_theory = np.linspace(-500, 5000, 1000)
+        # We need the effective sigma for the theoretical curve convolution 
+        # (Start jitter + Stop jitter = sqrt(2) * single detector jitter)
+        effective_sigma = time_res_sigma * np.sqrt(2)
+        
+        # Extended time array to prevent edge effects during convolution
+        t_theory = np.linspace(-1000, 10000, 2000)
         dt_bin = t_theory[1] - t_theory[0]
-        gaussian_kernel = np.exp(-(t_theory**2)/(2*time_res_sigma**2)) / (np.sqrt(2*np.pi)*time_res_sigma)
+        
+        # Convolving with the correct effective Gaussian kernel
+        gaussian_kernel = np.exp(-(t_theory**2)/(2 * effective_sigma**2)) / (np.sqrt(2 * np.pi) * effective_sigma)
         
         # Ideal exponential decays
         decay1 = np.where(t_theory > 0, (alpha1/tau1) * np.exp(-t_theory/tau1), 0)
         decay2 = np.where(t_theory > 0, (alpha2/tau2) * np.exp(-t_theory/tau2), 0)
         decay3 = np.where(t_theory > 0, (alpha3/tau3) * np.exp(-t_theory/tau3), 0)
         
-        # Convoluted with detector resolution
+        # Convoluted with effective detector resolution
         conv1 = np.convolve(decay1, gaussian_kernel, mode='same') * dt_bin
         conv2 = np.convolve(decay2, gaussian_kernel, mode='same') * dt_bin
         conv3 = np.convolve(decay3, gaussian_kernel, mode='same') * dt_bin
@@ -500,7 +506,7 @@ with tab2:
         ax_hist2.set_xlim(-500, 5000)
         
         ax_hist2.set_title("Positron Lifetime Spectrum (Logarithmic Scale)", color='white')
-        ax_hist2.set_xlabel("Time Difference $t$ (ps)")
+        ax_hist2.set_xlabel("Time Difference $\Delta t$ (ps)")
         ax_hist2.set_ylabel("Counts")
         ax_hist2.legend(loc='upper right')
         
