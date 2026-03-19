@@ -467,14 +467,16 @@ with tab2:
         # (Start jitter + Stop jitter = sqrt(2) * single detector jitter)
         effective_sigma = time_res_sigma * np.sqrt(2)
         
-        # Extended time array to prevent edge effects during convolution
-        t_theory = np.linspace(-1000, 10000, 2000)
+        # Time array for the decay
+        t_theory = np.linspace(-500, 5000, 2000)
         dt_bin = t_theory[1] - t_theory[0]
         
-        # Convolving with the correct effective Gaussian kernel
-        gaussian_kernel = np.exp(-(t_theory**2)/(2 * effective_sigma**2)) / (np.sqrt(2 * np.pi) * effective_sigma)
+        # CRITICAL FIX: The Gaussian kernel MUST be symmetric around 0 
+        # so np.convolve doesn't shift the data off-center.
+        t_kernel = np.arange(-2000, 2000, dt_bin)
+        gaussian_kernel = np.exp(-(t_kernel**2)/(2 * effective_sigma**2)) / (np.sqrt(2 * np.pi) * effective_sigma)
         
-        # Ideal exponential decays
+        # Ideal exponential decays (PDFs integrating to their respective probabilities)
         decay1 = np.where(t_theory > 0, (alpha1/tau1) * np.exp(-t_theory/tau1), 0)
         decay2 = np.where(t_theory > 0, (alpha2/tau2) * np.exp(-t_theory/tau2), 0)
         decay3 = np.where(t_theory > 0, (alpha3/tau3) * np.exp(-t_theory/tau3), 0)
@@ -491,18 +493,21 @@ with tab2:
         bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
         
         # Scale theoretical curves to match histogram area
-        area = len(st.session_state.lifetime_data) * (bins[1] - bins[0])
+        hist_bin_width = bins[1] - bins[0]
+        area = len(st.session_state.lifetime_data) * hist_bin_width
         
         ax_hist2.step(bin_centers, counts, where='mid', color='white', alpha=0.7, label="Measured Data")
         
-        # Plot theory lines
+        # Plot theory lines scaled by the area
         ax_hist2.plot(t_theory, conv1 * area, color='cyan', linestyle='--', label=f"Para-Ps ($\\tau$={tau1}ps)")
         ax_hist2.plot(t_theory, conv2 * area, color='lime', linestyle='--', label=f"Free ($\\tau$={tau2}ps)")
         ax_hist2.plot(t_theory, conv3 * area, color='gold', linestyle='--', label=f"Ortho-Ps ($\\tau$={tau3}ps)")
         ax_hist2.plot(t_theory, conv_total * area, color='red', lw=2, label="Total Theoretical Sum")
         
         ax_hist2.set_yscale('log')
-        ax_hist2.set_ylim(0.5, max(counts) * 2)
+        # Prevent log(0) issues by setting a firm lower limit
+        max_count = max(counts) if len(counts) > 0 else 100
+        ax_hist2.set_ylim(0.5, max_count * 2)
         ax_hist2.set_xlim(-500, 5000)
         
         ax_hist2.set_title("Positron Lifetime Spectrum (Logarithmic Scale)", color='white')
