@@ -260,39 +260,254 @@ with tab1:
         plt.close(fig_hist)
     else:
         st.info("Click 'Simulate Experiment' or 'Record 500 Events Rapidly' to build the spectrum.")
-# --- Setup 2: Positron Lifetime ---
+# --- Setup 2: Positron Lifetime Measurement (3-Component Simulation) ---
 with tab2:
     st.header("Setup 2: Positron Lifetime Measurement")
-    st.markdown("Both BaF2 detectors are now kept at a fixed distance.")
+    st.markdown("""
+    This experiment measures how long positrons "live" inside a material before annihilating.
+    We use a **22Na source**. The **Start** signal is the 1275 keV gamma emitted when 22Ne de-excites (almost simultaneous with positron creation). 
+    The **Stop** signal is one of the 511 keV gamma quanta from the positron's annihilation.
+    """)
     
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("Geometry: Fixed Position")
-        fig2, ax2 = plt.subplots(figsize=(5, 5))
-        draw_detector_setup(ax2, "22Na Source", "Det 1 (Start)\n1275 keV", "Det 2 (Stop)\n511 keV", det2_pos='shift', value=6)
-        st.pyplot(fig2)
-        st.markdown("The start signal is the 1275 keV emission from 22Ne, and the stop signal is the 511 keV annihilation quantum.")
+    # State Management for Tab 2
+    if 'lifetime_data' not in st.session_state:
+        st.session_state.lifetime_data = []
+        st.session_state.lifetime_components = []
 
-    with col2:
-        st.subheader("Principle: Convoluted Decay")
-        st.markdown(r"The true lifetime decay $e^{-t/\tau}$ is convoluted with the detector's Gaussian time resolution.")
-        st.latex(r"N(t) \propto \sum \alpha_i e^{-t/\tau_i} \ast P_{Det}(t)")
+    # Tab-specific controls
+    col_ctrl1, col_ctrl2 = st.columns([1, 1])
+    with col_ctrl1:
+        num_lt_events = st.slider("Number of Sequential Events (N)", min_value=1, max_value=30, value=10, step=1, key="t2_num")
+        if st.button("Clear Data", key="t2_clear"):
+            st.session_state.lifetime_data = []
+            st.session_state.lifetime_components = []
+            
+    with col_ctrl2:
+        st.write("Controls:")
+        trigger_lt_anim = st.button("Simulate Experiment (Animation)", key="t2_anim")
+        trigger_lt_bulk = st.button("Record 5000 Events Rapidly", key="t2_bulk")
+
+    # Physics Constants for 3-Component Polymer (e.g., Plexiglas)
+    time_res_sigma = 100.0  # Detector jitter (ps)
+    
+    # Component 1: Para-positronium (p-Ps) - Very fast
+    tau1, alpha1 = 150.0, 0.20
+    # Component 2: Free Positron Annihilation - Medium
+    tau2, alpha2 = 400.0, 0.45
+    # Component 3: Ortho-positronium (o-Ps) - Slow (Pick-off annihilation)
+    tau3, alpha3 = 2000.0, 0.35
+    
+    components = [
+        {"name": "Para-Ps", "tau": tau1, "prob": alpha1, "color": "cyan"},
+        {"name": "Free", "tau": tau2, "prob": alpha2, "color": "lime"},
+        {"name": "Ortho-Ps", "tau": tau3, "prob": alpha3, "color": "gold"}
+    ]
+
+    st.subheader("The Three-Component Lifetime")
+    st.markdown("""
+    Positrons in polymers like Plexiglas can annihilate in three different states, each with a distinct lifetime ($\tau_i$) and probability ($\\alpha_i$). 
+    Watch the timeline: the "Start" trigger fires, the positron lives in the material, and eventually annihilates to fire the "Stop" trigger. The delay is colored by which state the positron entered!
+    """)
+
+    placeholder_t2 = st.empty()
+    plt.style.use('dark_background')
+
+    if trigger_lt_anim:
+        # Pre-calculate N events
+        states = np.random.choice([0, 1, 2], size=num_lt_events, p=[alpha1, alpha2, alpha3])
+        lifetimes = [np.random.exponential(components[s]["tau"]) for s in states]
         
-        t2 = np.linspace(-5, 20, 400)
-        dt2 = 1.5
-        gaussian2 = (1 / (np.sqrt(2 * np.pi) * dt2)) * np.exp(-(t2**2) / (2 * dt2**2))
-        tau = 3.0
-        decay = np.where(t2 > 0, np.exp(-t2/tau), 0)
-        convoluted = np.convolve(decay, gaussian2, mode='same') / sum(gaussian2)
+        j1_arr = np.random.normal(0, time_res_sigma, num_lt_events)
+        j2_arr = np.random.normal(0, time_res_sigma, num_lt_events)
         
-        fig2b, ax2b = plt.subplots()
-        ax2b.plot(t2, decay, 'k--', label="Theoretical Decay")
-        ax2b.plot(t2, convoluted, 'r-', label="Measured Spectrum (Convoluted)")
-        ax2b.set_xlabel("Time (ps)")
-        ax2b.set_yscale('log')
-        ax2b.set_ylim(1e-3, 1.5)
-        ax2b.legend()
-        st.pyplot(fig2b)
+        # We assume physical flight time to detectors is constant and cancels out.
+        # Delay = true lifetime + stop_jitter - start_jitter
+        measured_dts = np.array(lifetimes) + j2_arr - j1_arr
+        
+        st.session_state.lifetime_data.extend(measured_dts)
+        st.session_state.lifetime_components.extend(states)
+        
+        past_start = []
+        past_stop = []
+        past_colors = []
+        
+        for ev in range(num_lt_events):
+            state_idx = states[ev]
+            comp = components[state_idx]
+            t_life = lifetimes[ev]
+            
+            # Animation frames: scale frames by lifetime to show waiting
+            total_time_to_simulate = max(t_life + 300, 600)  # At least 600ps to see triggers
+            frames = int(min(15, total_time_to_simulate / 50)) # Cap frames for speed
+            
+            for i in range(frames + 1):
+                fig, (ax_phys, ax_time) = plt.subplots(2, 1, figsize=(10, 6), gridspec_kw={'height_ratios': [1, 1]})
+                fig.patch.set_facecolor('none')
+                ax_phys.set_facecolor('none')
+                ax_time.set_facecolor('none')
+                
+                # --- Physical Space ---
+                ax_phys.set_xlim(-15, 15)
+                ax_phys.set_ylim(-2, 2)
+                ax_phys.axis('off')
+                ax_phys.set_title(f"Event {ev + 1}/{num_lt_events}: {comp['name']} State ($\tau$={comp['tau']:.0f}ps)", color=comp['color'])
+                
+                # Detectors & Source
+                ax_phys.add_patch(patches.Rectangle((-10, -1), 2, 2, color='mediumorchid', alpha=0.4))
+                ax_phys.text(-9, -1.5, "Det 1 (Start)\n1275 keV", ha='center', color='mediumorchid')
+                
+                ax_phys.add_patch(patches.Rectangle((8, -1), 2, 2, color='white', alpha=0.4))
+                ax_phys.text(9, -1.5, "Det 2 (Stop)\n511 keV", ha='center', color='white')
+                
+                # Sample block
+                ax_phys.add_patch(patches.Rectangle((-1, -1), 2, 2, color='gray', alpha=0.5))
+                ax_phys.text(0, 1.2, "Plexiglas Sample", ha='center', color='white')
+                
+                current_time_ps = (i / frames) * total_time_to_simulate
+                
+                # 1. Start Photon Flight (instantaneous for simplicity, just flashes)
+                if current_time_ps < 100:
+                    ax_phys.plot([-1, -9], [0, 0], color='mediumorchid', lw=3, linestyle='--')
+                
+                # 2. Positron living in sample
+                if 0 <= current_time_ps < t_life:
+                    ax_phys.scatter([0], [0], color=comp['color'], s=150, zorder=10) # Glowing positron
+                    
+                # 3. Annihilation / Stop Photon Flight
+                if current_time_ps >= t_life:
+                    ax_phys.plot([1, 9], [0, 0], color=comp['color'], lw=3, linestyle='--')
+                    ax_phys.scatter([0], [0], color='white', marker='x', s=100) # Annihilation flash
+                    
+                # --- Timeline ---
+                ax_time.set_xlim(-200, 3000)
+                ax_time.set_ylim(0, 3)
+                ax_time.set_yticks([1, 2])
+                ax_time.set_yticklabels(["Detector 2\n(Stop)", "Detector 1\n(Start)"])
+                ax_time.set_xlabel("Time (ps)")
+                ax_time.set_title("Electronic Timelines (Building the Decay Curve)", color='white')
+                
+                # Draw past triggers
+                for p_s, p_e, p_c in zip(past_start, past_stop, past_colors):
+                    ax_time.axvline(p_s, ymin=0.55, ymax=0.95, color='mediumorchid', alpha=0.2, lw=1)
+                    ax_time.axvline(p_e, ymin=0.05, ymax=0.45, color=p_c, alpha=0.2, lw=1)
+                    # Connection line showing dt
+                    ax_time.plot([p_s, p_e], [2, 1], color=p_c, alpha=0.1, lw=1)
+                
+                # Draw current triggers based on time
+                t_start_elec = j1_arr[ev]
+                t_stop_elec = t_life + j2_arr[ev]
+                
+                if current_time_ps >= 0: # Start triggers around t=0
+                    ax_time.axvline(t_start_elec, ymin=0.55, ymax=0.95, color='mediumorchid', alpha=1.0, lw=2.5)
+                if current_time_ps >= t_life:
+                    ax_time.axvline(t_stop_elec, ymin=0.05, ymax=0.45, color=comp['color'], alpha=1.0, lw=2.5)
+                    ax_time.plot([t_start_elec, t_stop_elec], [2, 1], color=comp['color'], alpha=0.8, lw=2, linestyle=':')
+
+                plt.tight_layout()
+                with placeholder_t2.container():
+                    st.pyplot(fig, transparent=True)
+                plt.close(fig)
+                
+            past_start.append(t_start_elec)
+            past_stop.append(t_stop_elec)
+            past_colors.append(comp['color'])
+            
+    else:
+        fig, (ax_phys, ax_time) = plt.subplots(2, 1, figsize=(10, 6), gridspec_kw={'height_ratios': [1, 1]})
+        fig.patch.set_facecolor('none')
+        ax_phys.set_facecolor('none')
+        ax_time.set_facecolor('none')
+        
+        ax_phys.set_xlim(-15, 15)
+        ax_phys.set_ylim(-2, 2)
+        ax_phys.axis('off')
+        ax_phys.set_title("Physical Space: Setup Geometry", color='white')
+        
+        ax_phys.add_patch(patches.Rectangle((-10, -1), 2, 2, color='mediumorchid', alpha=0.4))
+        ax_phys.text(-9, -1.5, "Det 1 (Start)\n1275 keV", ha='center', color='mediumorchid')
+        ax_phys.add_patch(patches.Rectangle((8, -1), 2, 2, color='white', alpha=0.4))
+        ax_phys.text(9, -1.5, "Det 2 (Stop)\n511 keV", ha='center', color='white')
+        ax_phys.add_patch(patches.Rectangle((-1, -1), 2, 2, color='gray', alpha=0.5))
+        ax_phys.text(0, 1.2, "Plexiglas Sample", ha='center', color='white')
+        
+        ax_time.set_xlim(-200, 3000)
+        ax_time.set_ylim(0, 3)
+        ax_time.set_yticks([1, 2])
+        ax_time.set_yticklabels(["Detector 2\n(Stop)", "Detector 1\n(Start)"])
+        ax_time.set_xlabel("Time (ps)")
+        ax_time.set_title("Electronic Timelines (Awaiting Experiment...)", color='white')
+        
+        plt.tight_layout()
+        with placeholder_t2.container():
+            st.pyplot(fig, transparent=True)
+            plt.close(fig)
+
+    st.markdown("---")
+    st.subheader("Measured Lifetime Spectrum (Log Scale)")
+
+    if trigger_lt_bulk:
+        bulk_n = 5000
+        states = np.random.choice([0, 1, 2], size=bulk_n, p=[alpha1, alpha2, alpha3])
+        lifetimes = [np.random.exponential(components[s]["tau"]) for s in states]
+        j1 = np.random.normal(0, time_res_sigma, bulk_n)
+        j2 = np.random.normal(0, time_res_sigma, bulk_n)
+        measured_dts = np.array(lifetimes) + j2 - j1
+        
+        st.session_state.lifetime_data.extend(measured_dts)
+        st.session_state.lifetime_components.extend(states)
+
+    st.markdown(f"**Total recorded decay events:** {len(st.session_state.lifetime_data)}")
+
+    if len(st.session_state.lifetime_data) > 0:
+        fig_hist2, ax_hist2 = plt.subplots(figsize=(10, 5))
+        fig_hist2.patch.set_facecolor('none')
+        ax_hist2.set_facecolor('none')
+        
+        # Calculate theoretical curves via convolution
+        t_theory = np.linspace(-500, 5000, 1000)
+        dt_bin = t_theory[1] - t_theory[0]
+        gaussian_kernel = np.exp(-(t_theory**2)/(2*time_res_sigma**2)) / (np.sqrt(2*np.pi)*time_res_sigma)
+        
+        # Ideal exponential decays
+        decay1 = np.where(t_theory > 0, (alpha1/tau1) * np.exp(-t_theory/tau1), 0)
+        decay2 = np.where(t_theory > 0, (alpha2/tau2) * np.exp(-t_theory/tau2), 0)
+        decay3 = np.where(t_theory > 0, (alpha3/tau3) * np.exp(-t_theory/tau3), 0)
+        
+        # Convoluted with detector resolution
+        conv1 = np.convolve(decay1, gaussian_kernel, mode='same') * dt_bin
+        conv2 = np.convolve(decay2, gaussian_kernel, mode='same') * dt_bin
+        conv3 = np.convolve(decay3, gaussian_kernel, mode='same') * dt_bin
+        conv_total = conv1 + conv2 + conv3
+        
+        # Plot Histogram
+        bins = np.linspace(-500, 5000, 120)
+        counts, bin_edges = np.histogram(st.session_state.lifetime_data, bins=bins)
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        
+        # Scale theoretical curves to match histogram area
+        area = len(st.session_state.lifetime_data) * (bins[1] - bins[0])
+        
+        ax_hist2.step(bin_centers, counts, where='mid', color='white', alpha=0.7, label="Measured Data")
+        
+        # Plot theory lines
+        ax_hist2.plot(t_theory, conv1 * area, color='cyan', linestyle='--', label=f"Para-Ps ($\\tau$={tau1}ps)")
+        ax_hist2.plot(t_theory, conv2 * area, color='lime', linestyle='--', label=f"Free ($\\tau$={tau2}ps)")
+        ax_hist2.plot(t_theory, conv3 * area, color='gold', linestyle='--', label=f"Ortho-Ps ($\\tau$={tau3}ps)")
+        ax_hist2.plot(t_theory, conv_total * area, color='red', lw=2, label="Total Theoretical Sum")
+        
+        ax_hist2.set_yscale('log')
+        ax_hist2.set_ylim(0.5, max(counts) * 2)
+        ax_hist2.set_xlim(-500, 5000)
+        
+        ax_hist2.set_title("Positron Lifetime Spectrum (Logarithmic Scale)", color='white')
+        ax_hist2.set_xlabel("Time Difference $t$ (ps)")
+        ax_hist2.set_ylabel("Counts")
+        ax_hist2.legend(loc='upper right')
+        
+        st.pyplot(fig_hist2, transparent=True)
+        plt.close(fig_hist2)
+    else:
+        st.info("Click 'Simulate Experiment' or 'Record 5000 Events Rapidly' to build the 3-component decay spectrum.")
 
 # --- Setup 3: Angular Efficiency ---
 with tab3:
