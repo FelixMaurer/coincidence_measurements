@@ -77,28 +77,30 @@ tab1, tab2, tab3, tab4 = st.tabs([
 ])
 
 # --- Setup 1: Time Calibration (Detailed Simulation) ---
+# --- Setup 1: Time Calibration (Detailed Simulation) ---
 with tab1:
     st.header("Setup 1: Time Calibration & Resolution")
     st.markdown("""
     This virtual experiment simulates the time calibration of the coincidence apparatus. 
-    The setup uses a **22Na source**. When a positron annihilates, it creates two **511 keV** gamma quanta emitted back-to-back at **180°**. 
-    We detect these using **BaF2 detectors** (excellent time resolution). 
+    The setup uses a **22Na source**. When a positron annihilates, it creates two **511 keV** gamma quanta emitted back-to-back at **180°**[cite: 7]. 
+    We detect these using **BaF2 detectors**, which are excellent for time resolution[cite: 19, 80]. 
     
-    By shifting Detector 2, we create a measurable time-of-flight difference to calibrate the Multichannel Buffer (MCB).
+    By shifting Detector 2, we create a measurable time-of-flight difference to calibrate the Multichannel Buffer (MCB)[cite: 372, 377].
     """)
     
     # Tab-specific controls
     col_ctrl1, col_ctrl2 = st.columns([1, 1])
     with col_ctrl1:
         distance_t1 = st.slider("Detector 2 Distance (cm)", min_value=4.0, max_value=40.0, value=st.session_state.current_distance, step=6.0, key="t1_dist")
+        num_events = st.slider("Number of Simultaneous Events (N)", min_value=1, max_value=50, value=15, step=1)
         if distance_t1 != st.session_state.current_distance:
             st.session_state.mcb_data = []
             st.session_state.current_distance = distance_t1
     
     with col_ctrl2:
         st.write("Controls:")
-        trigger_animation = st.button("Simulate Single Event (Animation)")
-        trigger_bulk = st.button("Record 500 Events")
+        trigger_animation = st.button("Simulate Burst (Animation)")
+        trigger_bulk = st.button("Record 500 Events Rapidly")
 
     # Physics Constants
     c_cm_per_ps = 0.03 
@@ -106,25 +108,29 @@ with tab1:
     t1_true = fixed_det_dist / c_cm_per_ps
     t2_true = distance_t1 / c_cm_per_ps
     true_delta_t = t2_true - t1_true
-    time_resolution_sigma = 150.0 # ps
+    time_resolution_sigma = 150.0 # ps [cite: 150]
 
-    st.subheader("The Coincidence Principle")
+    st.subheader("The Coincidence Principle & Time Uncertainty")
     st.markdown("""
-    A coincidence circuit only records an event if both the "Start" and "Stop" signals arrive within a specific resolving time. 
-    The measured arrival times fluctuate around the true time due to the detector's time resolution (Gaussian jitter).
+    A coincidence circuit only records an event if both the "Start" and "Stop" signals arrive within a specific resolving time[cite: 163, 678]. 
+    Notice below that while all $N$ photon pairs physically arrive at the detectors at the same time, the electronic "Start" and "Stop" triggers fluctuate. This spread represents the detector's **time resolution** (Gaussian jitter)[cite: 150, 151].
     """)
 
     placeholder = st.empty()
 
     if trigger_animation:
-        frames = 30
+        frames = 15  # Reduced for faster animation
         max_dist_frame = max(fixed_det_dist, distance_t1) + 2
         
-        jitter1 = np.random.normal(0, time_resolution_sigma)
-        jitter2 = np.random.normal(0, time_resolution_sigma)
-        measured_delta_t = (t2_true + jitter2) - (t1_true + jitter1)
+        # Generate N independent jitters
+        j1 = np.random.normal(0, time_resolution_sigma, num_events)
+        j2 = np.random.normal(0, time_resolution_sigma, num_events)
+        measured_dts = (t2_true + j2) - (t1_true + j1)
         
-        st.session_state.mcb_data.append(measured_delta_t)
+        # Add visual spatial spread for the particles so they don't perfectly overlap
+        y_offsets = np.random.uniform(-0.4, 0.4, num_events)
+        
+        st.session_state.mcb_data.extend(measured_dts)
         
         for i in range(frames + 1):
             fig, (ax_phys, ax_time) = plt.subplots(2, 1, figsize=(10, 6), gridspec_kw={'height_ratios': [1, 1]})
@@ -146,10 +152,11 @@ with tab1:
             pos1 = -progress * max_dist_frame
             pos2 = progress * max_dist_frame
             
+            # Draw the N photons flying
             if pos1 >= -fixed_det_dist:
-                ax_phys.plot(pos1, 0, 'bo', markersize=8)
+                ax_phys.scatter([pos1]*num_events, y_offsets, color='blue', alpha=0.6, s=40)
             if pos2 <= distance_t1:
-                ax_phys.plot(pos2, 0, 'go', markersize=8)
+                ax_phys.scatter([pos2]*num_events, y_offsets, color='green', alpha=0.6, s=40)
                 
             # Timeline
             ax_time.set_xlim(0, 1500)
@@ -157,29 +164,26 @@ with tab1:
             ax_time.set_yticks([1, 2])
             ax_time.set_yticklabels(["Detector 2\n(Stop)", "Detector 1\n(Start)"])
             ax_time.set_xlabel("Time (ps)")
-            ax_time.set_title("Electronic Timelines")
+            ax_time.set_title("Electronic Timelines (Showing Time Uncertainty)")
             
             current_time_ps = progress * (max_dist_frame / c_cm_per_ps)
             
-            if current_time_ps >= (t1_true + jitter1):
-                ax_time.axvline(t1_true + jitter1, ymin=0.5, ymax=1.0, color='blue', linewidth=3)
-                ax_time.text(t1_true + jitter1 + 20, 2.2, "Signal 1", color='blue')
-                
-            if current_time_ps >= (t2_true + jitter2):
-                ax_time.axvline(t2_true + jitter2, ymin=0, ymax=0.5, color='green', linewidth=3)
-                ax_time.text(t2_true + jitter2 + 20, 1.2, "Signal 2", color='green')
-                
-            if current_time_ps >= max((t1_true + jitter1), (t2_true + jitter2)):
-                t_min = min(t1_true + jitter1, t2_true + jitter2)
-                t_max = max(t1_true + jitter1, t2_true + jitter2)
-                ax_time.annotate('', xy=(t_min, 1.5), xytext=(t_max, 1.5), arrowprops=dict(arrowstyle='<->', color='red', lw=2))
-                ax_time.text((t_min + t_max)/2, 1.6, f"$\Delta t$ = {measured_delta_t:.0f} ps", ha='center', color='red')
+            # Draw triggers for each of the N events as they happen
+            for k in range(num_events):
+                if current_time_ps >= (t1_true + j1[k]):
+                    ax_time.axvline(t1_true + j1[k], ymin=0.55, ymax=0.95, color='blue', alpha=0.4, lw=2)
+                if current_time_ps >= (t2_true + j2[k]):
+                    ax_time.axvline(t2_true + j2[k], ymin=0.05, ymax=0.45, color='green', alpha=0.4, lw=2)
+
+            # Draw theoretical center lines
+            ax_time.axvline(t1_true, ymin=0.55, ymax=0.95, color='white', linestyle='dotted', alpha=0.5)
+            ax_time.axvline(t2_true, ymin=0.05, ymax=0.45, color='white', linestyle='dotted', alpha=0.5)
 
             plt.tight_layout()
             with placeholder.container():
-                st.pyplot(fig)
+                st.pyplot(fig, transparent=True)
             plt.close(fig)
-            time.sleep(0.05)
+            # Removed time.sleep() entirely to let Streamlit run as fast as possible
     else:
         fig, (ax_phys, ax_time) = plt.subplots(2, 1, figsize=(10, 6), gridspec_kw={'height_ratios': [1, 1]})
         ax_phys.set_xlim(-10, 45)
@@ -198,14 +202,14 @@ with tab1:
         ax_time.set_yticks([1, 2])
         ax_time.set_yticklabels(["Detector 2\n(Stop)", "Detector 1\n(Start)"])
         ax_time.set_xlabel("Time (ps)")
-        ax_time.set_title("Electronic Timelines (Awaiting Event...)")
+        ax_time.set_title("Electronic Timelines (Awaiting Burst...)")
         
         plt.tight_layout()
         with placeholder.container():
-            st.pyplot(fig)
+            st.pyplot(fig, transparent=True)
 
     st.markdown("---")
-    st.subheader("Recorded Data: Multichannel Buffer (MCB) Spectrum")
+    st.subheader("Recorded Data: Multichannel Buffer (MCB) Spectrum [cite: 685, 687]")
 
     if trigger_bulk:
         j1 = np.random.normal(0, time_resolution_sigma, 500)
@@ -224,10 +228,9 @@ with tab1:
         ax_hist.set_xlabel("Measured Time Difference $\Delta t$ (ps)")
         ax_hist.set_ylabel("Counts")
         ax_hist.legend()
-        st.pyplot(fig_hist)
+        st.pyplot(fig_hist, transparent=True)
     else:
-        st.info("Click 'Simulate Single Event' or 'Record 500 Events' to build the spectrum.")
-
+        st.info("Click 'Simulate Burst' or 'Record 500 Events Rapidly' to build the spectrum.")
 
 # --- Setup 2: Positron Lifetime ---
 with tab2:
